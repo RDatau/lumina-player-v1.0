@@ -1,6 +1,7 @@
+
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { Track, PlayerState, AppSettings } from './types';
-import { MOCK_PLAYLIST } from './constants';
+import { MOCK_PLAYLIST, DEFAULT_SETTINGS } from './constants';
 import { 
   PlayIcon, 
   PauseIcon, 
@@ -38,35 +39,16 @@ export interface InternalAudioTrack {
   url?: string;
 }
 
-const DEFAULT_COVER = 'https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=1000&auto=format&fit=crop';
+export interface InternalSubtitleTrack {
+  id: string;
+  label: string;
+  language: string;
+  kind: string;
+  isExternal: boolean;
+  url?: string;
+}
 
-const DEFAULT_SETTINGS: AppSettings = {
-  autoNext: true,
-  subtitle: {
-    fontSize: 20,
-    fontFamily: 'ui-sans-serif, system-ui, sans-serif',
-    textColor: '#ffffff',
-    backgroundColor: '#000000',
-    backgroundOpacity: 60,
-    delay: 0,
-    encoding: 'Auto'
-  },
-  video: {
-    aspectRatio: 'Default',
-    brightness: 100,
-    contrast: 100,
-    saturation: 100,
-    hue: 0,
-    gamma: 100,
-    hardwareAcceleration: true
-  },
-  audio: {
-    delay: 0,
-    channel: 'stereo',
-    device: 'Default',
-    track: 'Internal'
-  }
-};
+const DEFAULT_COVER = 'https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=1000&auto=format&fit=crop';
 
 const Tooltip: React.FC<{ text: string, position?: 'top' | 'bottom' | 'left' | 'right' }> = ({ text, position = 'top' }) => (
   <div className={`absolute px-2 py-1 glass rounded-lg 
@@ -112,6 +94,8 @@ const App: React.FC = () => {
 
   const [audioTracks, setAudioTracks] = useState<InternalAudioTrack[]>([]);
   const [selectedTrackId, setSelectedTrackId] = useState<string>('internal-0');
+  const [subtitleTracks, setSubtitleTracks] = useState<InternalSubtitleTrack[]>([]);
+  const [selectedSubtitleId, setSelectedSubtitleId] = useState<string>('disable');
 
   const [settings, setSettings] = useState<AppSettings>(() => {
     const saved = localStorage.getItem('lumina_settings_v2');
@@ -245,6 +229,8 @@ const App: React.FC = () => {
     setActiveSubtitle('');
     setAudioTracks([]);
     setSelectedTrackId('internal-0');
+    setSubtitleTracks([]);
+    setSelectedSubtitleId('disable');
     setPointA(null);
     setPointB(null);
     setIsABRepeatActive(false);
@@ -272,6 +258,8 @@ const App: React.FC = () => {
     setShowVideoOverlay(true);
     setAudioTracks([{ id: 'internal-0', label: 'Video Source (Default)', language: 'en', kind: 'main', isExternal: false }]);
     setSelectedTrackId('internal-0');
+    setSubtitleTracks([{ id: 'disable', label: 'Off', language: 'none', kind: 'none', isExternal: false }]);
+    setSelectedSubtitleId('disable');
     setPointA(null);
     setPointB(null);
     setIsABRepeatActive(false);
@@ -543,6 +531,27 @@ const App: React.FC = () => {
     triggerFeedback('audio', { icon: '🎵', label: 'Audio Injected' });
   }, [triggerFeedback]);
 
+  const handleLoadSubtitle = useCallback(async (file: File) => {
+    let url = URL.createObjectURL(file);
+    if (file.name.endsWith('.srt')) {
+      const text = await file.text();
+      const vttContent = `WEBVTT\n\n${text.replace(/,/g, '.')}`;
+      url = URL.createObjectURL(new Blob([vttContent], { type: 'text/vtt' }));
+    }
+    const newSub: InternalSubtitleTrack = {
+        id: `ext-sub-${Date.now()}`,
+        label: `Loaded: ${file.name}`,
+        language: 'custom',
+        kind: 'subtitles',
+        isExternal: true,
+        url: url
+    };
+    setSubtitleTracks(prev => [...prev, newSub]);
+    setSelectedSubtitleId(newSub.id);
+    setIsSubtitlesOn(true);
+    triggerFeedback('sub', { icon: '💬', label: 'Subtitle Injected' });
+  }, [triggerFeedback]);
+
   useEffect(() => {
     const handleDragEnter = (e: DragEvent) => { e.preventDefault(); e.stopPropagation(); dragCounter.current++; if (e.dataTransfer?.items?.length) setIsDragging(true); };
     const handleDragLeave = (e: DragEvent) => { e.preventDefault(); e.stopPropagation(); dragCounter.current--; if (dragCounter.current === 0) setIsDragging(false); };
@@ -686,11 +695,12 @@ const App: React.FC = () => {
         setPlayerState(PlayerState.PLAYING); 
         media.play().catch(() => setPlayerState(PlayerState.PAUSED));
         
-        const detected: InternalAudioTrack[] = [{ id: 'internal-0', label: 'Original Source', language: 'en', kind: 'main', isExternal: false }];
+        // Audio Track Detection
+        const detectedAudio: InternalAudioTrack[] = [{ id: 'internal-0', label: 'Original Source', language: 'en', kind: 'main', isExternal: false }];
         if ((media as any).audioTracks) {
             const tracks = (media as any).audioTracks;
             for (let i = 0; i < tracks.length; i++) {
-                detected.push({
+                detectedAudio.push({
                     id: `internal-${i + 1}`,
                     label: tracks[i].label || `Track ${i + 1}`,
                     language: tracks[i].language,
@@ -699,13 +709,103 @@ const App: React.FC = () => {
                 });
             }
         }
-        setAudioTracks(detected);
+        setAudioTracks(detectedAudio);
+
+        // Subtitle Track Detection
+        const detectedSubs: InternalSubtitleTrack[] = [{ id: 'disable', label: 'Off', language: 'none', kind: 'none', isExternal: false }];
+        if (currentTrack.subtitleUrl) {
+            detectedSubs.push({ id: 'track-default', label: 'Default Subtitle', language: 'en', kind: 'subtitles', isExternal: false, url: currentTrack.subtitleUrl });
+            setSelectedSubtitleId('track-default');
+        }
+        if (media.textTracks) {
+            for (let i = 0; i < media.textTracks.length; i++) {
+                const t = media.textTracks[i];
+                detectedSubs.push({
+                    id: `internal-sub-${i}`,
+                    label: t.label || `Embedded Sub ${i + 1}`,
+                    language: t.language,
+                    kind: t.kind,
+                    isExternal: false
+                });
+            }
+        }
+        setSubtitleTracks(detectedSubs);
+        
         startOverlayTimer();
       };
       media.addEventListener('canplay', onCanPlay, { once: true });
       return () => media.removeEventListener('canplay', onCanPlay);
     }
   }, [currentTrack]);
+
+  useEffect(() => {
+    const media = videoRef.current;
+    if (!media) return;
+
+    // Handle Subtitle Logic
+    const sub = subtitleTracks.find(t => t.id === selectedSubtitleId);
+    if (!sub || sub.id === 'disable') {
+        setIsSubtitlesOn(false);
+        setActiveSubtitle('');
+    } else {
+        setIsSubtitlesOn(true);
+        if (sub.isExternal && sub.url) {
+            // Remove old dynamic tracks if any
+            const existing = media.querySelector('#dynamic-sub');
+            if (existing) existing.remove();
+
+            const trackEl = document.createElement('track');
+            trackEl.id = 'dynamic-sub';
+            trackEl.src = sub.url;
+            trackEl.kind = 'subtitles';
+            trackEl.label = sub.label;
+            trackEl.default = true;
+            media.appendChild(trackEl);
+            
+            // Re-bind cuechange
+            const track = trackEl.track;
+            track.mode = 'hidden';
+            track.oncuechange = (e: any) => {
+                const cues = e.target.activeCues;
+                if (cues && cues.length > 0) setActiveSubtitle(cues[0].text);
+                else setActiveSubtitle('');
+            };
+        } else if (sub.id === 'track-default' && sub.url) {
+             // Handle the one from currentTrack object
+             const existing = media.querySelector('#dynamic-sub');
+             if (existing) existing.remove();
+             const trackEl = document.createElement('track');
+             trackEl.id = 'dynamic-sub';
+             trackEl.src = sub.url;
+             trackEl.kind = 'subtitles';
+             trackEl.default = true;
+             media.appendChild(trackEl);
+             const track = trackEl.track;
+             track.mode = 'hidden';
+             track.oncuechange = (e: any) => {
+                 const cues = e.target.activeCues;
+                 if (cues && cues.length > 0) setActiveSubtitle(cues[0].text);
+                 else setActiveSubtitle('');
+             };
+        } else {
+            // Embedded track
+            const idx = parseInt(sub.id.split('-').pop() || '0');
+            for (let i = 0; i < media.textTracks.length; i++) {
+                const t = media.textTracks[i];
+                if (i === idx) {
+                    t.mode = 'hidden';
+                    t.oncuechange = (e: any) => {
+                        const cues = e.target.activeCues;
+                        if (cues && cues.length > 0) setActiveSubtitle(cues[0].text);
+                        else setActiveSubtitle('');
+                    };
+                } else {
+                    t.mode = 'disabled';
+                }
+            }
+        }
+    }
+  }, [selectedSubtitleId, subtitleTracks]);
 
   useEffect(() => {
     const media = videoRef.current;
@@ -776,38 +876,6 @@ const App: React.FC = () => {
     };
   }, [handleNext, isLooping, settings.autoNext, isABRepeatActive, pointA, pointB]);
 
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
-
-    const onCueChange = (e: Event) => {
-      const track = e.target as TextTrack;
-      if (track.activeCues && track.activeCues.length > 0) {
-        const cue = track.activeCues[0] as VTTCue;
-        setActiveSubtitle(cue.text);
-      } else {
-        setActiveSubtitle('');
-      }
-    };
-
-    const setupTrack = () => {
-      if (video.textTracks && video.textTracks.length > 0) {
-        const track = video.textTracks[0];
-        track.mode = 'hidden'; 
-        track.addEventListener('cuechange', onCueChange);
-        return () => track.removeEventListener('cuechange', onCueChange);
-      }
-    };
-
-    const timeout = setTimeout(setupTrack, 500);
-    return () => {
-      clearTimeout(timeout);
-      if (video.textTracks && video.textTracks.length > 0) {
-        video.textTracks[0].removeEventListener('cuechange', onCueChange);
-      }
-    };
-  }, [currentTrack]);
-
   const formatTime = (time: number) => {
     if (!isFinite(time) || isNaN(time)) return "0:00";
     const mins = Math.floor(time / 60);
@@ -828,8 +896,13 @@ const App: React.FC = () => {
   const toggleSubtitles = useCallback(() => {
     const newState = !isSubtitlesOn;
     setIsSubtitlesOn(newState);
+    if (!newState) {
+        setSelectedSubtitleId('disable');
+    } else if (subtitleTracks.length > 1) {
+        setSelectedSubtitleId(subtitleTracks[1].id);
+    }
     triggerFeedback('sub', { icon: '💬', label: newState ? 'Sub: On' : 'Sub: Off' });
-  }, [isSubtitlesOn, triggerFeedback]);
+  }, [isSubtitlesOn, triggerFeedback, subtitleTracks]);
 
   const hexToRgba = (hex: string, opacity: number) => {
     const r = parseInt(hex.slice(1, 3), 16);
@@ -840,7 +913,7 @@ const App: React.FC = () => {
 
   const videoStyle = (): React.CSSProperties => {
     const v = settings.video;
-    const filters = `brightness(${v.brightness}%) contrast(${v.contrast}%) saturate(${v.saturation}%) hue-rotate(${v.hue}deg) brightness(${v.gamma}%)`;
+    const filters = `brightness(${v.brightness}%) contrast(${v.contrast}%) saturate(${v.saturation}%) hue-rotate(${v.hue}deg) contrast(${v.gamma}%)`;
     
     let base: React.CSSProperties = { 
         filter: filters,
@@ -890,7 +963,6 @@ const App: React.FC = () => {
          <div className="absolute inset-0 bg-gradient-to-b from-black/80 via-transparent to-black/80 opacity-70" />
       </div>
 
-      {/* Floating Logo Branding */}
       <div className={`fixed top-6 left-6 z-[100] transition-all duration-1000 ${playerState === PlayerState.IDLE ? 'opacity-0 -translate-x-10' : 'opacity-100 translate-x-0'}`}>
         <div className="flex items-center gap-3 glass p-2 pr-5 rounded-2xl border-white/10 shadow-2xl group cursor-pointer hover:bg-white/5 transition-all">
           <LuminaLogo className="w-8 h-8 group-hover:scale-110 transition-transform duration-500" />
@@ -1010,18 +1082,7 @@ const App: React.FC = () => {
             className={`relative z-10 transition-all duration-1000 w-full h-full pointer-events-none ${playerState === PlayerState.IDLE ? 'opacity-0 scale-110' : 'opacity-100 scale-100'} ${currentTrack?.type === 'audio' ? 'opacity-0 invisible' : ''}`} 
             style={videoStyle()} 
             crossOrigin="anonymous"
-          >
-            {currentTrack?.subtitleUrl && isSubtitlesOn && (
-              <track 
-                key={currentTrack.id}
-                src={currentTrack.subtitleUrl} 
-                kind="subtitles" 
-                srcLang="en" 
-                label="English" 
-                default 
-              />
-            )}
-          </video>
+          />
           
           <audio ref={externalAudioRef} className="hidden" />
 
@@ -1203,6 +1264,11 @@ const App: React.FC = () => {
         selectedTrackId={selectedTrackId}
         onTrackChange={setSelectedTrackId}
         onLoadExternalAudio={handleLoadExternalAudio}
+        subtitleTracks={subtitleTracks}
+        selectedSubtitleId={selectedSubtitleId}
+        onSubtitleChange={setSelectedSubtitleId}
+        onLoadSubtitle={handleLoadSubtitle}
+        currentTrack={currentTrack}
       />
 
       <FeedbackModal 

@@ -1,6 +1,8 @@
+
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { AppSettings } from '../types';
-import { InternalAudioTrack } from '../App';
+import { AppSettings, Track } from '../types';
+import { InternalAudioTrack, InternalSubtitleTrack } from '../App';
+import { DEFAULT_SETTINGS } from '../constants';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -11,6 +13,11 @@ interface SettingsModalProps {
   selectedTrackId: string;
   onTrackChange: (id: string) => void;
   onLoadExternalAudio: (file: File) => void;
+  subtitleTracks: InternalSubtitleTrack[];
+  selectedSubtitleId: string;
+  onSubtitleChange: (id: string) => void;
+  onLoadSubtitle: (file: File) => void;
+  currentTrack: Track | null;
 }
 
 const CustomDropdown: React.FC<{ 
@@ -45,7 +52,7 @@ const CustomDropdown: React.FC<{
             
             {isOpen && (
                 <div className="absolute top-full left-0 w-full mt-2 glass-dark border border-white/10 rounded-2xl py-2 z-[100] shadow-[0_20px_40px_rgba(0,0,0,0.8)] animate-in slide-in-from-top-2 duration-300 max-h-48 overflow-y-auto custom-scrollbar">
-                    {options.map((opt) => (
+                    {options.length > 0 ? options.map((opt) => (
                         <button
                             key={opt.id}
                             onClick={() => { onChange(opt.id); setIsOpen(false); }}
@@ -53,7 +60,9 @@ const CustomDropdown: React.FC<{
                         >
                             {opt.label}
                         </button>
-                    ))}
+                    )) : (
+                      <div className="px-5 py-3 text-[10px] text-white/20 italic">No tracks detected</div>
+                    )}
                 </div>
             )}
         </div>
@@ -75,7 +84,12 @@ const SettingsModal = React.memo<SettingsModalProps>(({
     audioTracks, 
     selectedTrackId, 
     onTrackChange,
-    onLoadExternalAudio
+    onLoadExternalAudio,
+    subtitleTracks,
+    selectedSubtitleId,
+    onSubtitleChange,
+    onLoadSubtitle,
+    currentTrack
 }) => {
   const [activeTab, setActiveTab] = useState<'general' | 'video' | 'audio' | 'subtitle'>('general');
   const [position, setPosition] = useState({ x: 0, y: 0 });
@@ -84,6 +98,7 @@ const SettingsModal = React.memo<SettingsModalProps>(({
   
   const modalRef = useRef<HTMLDivElement>(null);
   const audioInputRef = useRef<HTMLInputElement>(null);
+  const subtitleInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (isOpen) {
@@ -154,15 +169,44 @@ const SettingsModal = React.memo<SettingsModalProps>(({
     });
   };
 
-  const resetSection = (section: 'video', key: string) => {
-    const defaults: any = {
-        brightness: 100,
-        contrast: 100,
-        saturation: 100,
-        hue: 0,
-        gamma: 100
+  const resetSection = (section: 'video' | 'audio' | 'subtitle') => {
+    const defaultSettings: any = {
+        video: {
+            aspectRatio: 'Default',
+            brightness: 100,
+            contrast: 100,
+            saturation: 100,
+            hue: 0,
+            gamma: 100,
+            hardwareAcceleration: true
+        },
+        audio: {
+            delay: 0,
+            channel: 'stereo',
+            device: 'Default',
+            track: 'Internal'
+        },
+        subtitle: {
+            fontSize: 20,
+            fontFamily: 'ui-sans-serif, system-ui, sans-serif',
+            textColor: '#ffffff',
+            backgroundColor: '#000000',
+            backgroundOpacity: 60,
+            delay: 0,
+            encoding: 'Auto'
+        }
     };
-    updateSection(section, key, defaults[key]);
+    onSettingsChange({
+        ...settings,
+        [section]: defaultSettings[section]
+    });
+  };
+
+  const handleSearchSubtitle = () => {
+    if (currentTrack) {
+        const query = encodeURIComponent(`${currentTrack.title} ${currentTrack.artist} subtitle`);
+        window.open(`https://www.google.com/search?q=${query}`, '_blank');
+    }
   };
 
   return (
@@ -242,13 +286,23 @@ const SettingsModal = React.memo<SettingsModalProps>(({
                         <ShortcutRow keyName="Esc" desc="Stop / Clear Library" />
                     </div>
                 </div>
+                
+                <button 
+                    onClick={() => onSettingsChange(DEFAULT_SETTINGS)}
+                    className="w-full py-4 text-[9px] font-black uppercase tracking-[0.3em] text-rose-500 border border-rose-500/20 rounded-2xl hover:bg-rose-500 hover:text-white transition-all"
+                >
+                    Reset All To Default
+                </button>
             </div>
           )}
 
           {activeTab === 'video' && (
             <div className="space-y-10">
               <div className="space-y-4">
-                <label className="text-[10px] font-black uppercase tracking-widest text-white/40">Aspect Ratio</label>
+                <div className="flex justify-between items-center">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-white/40">Aspect Ratio</label>
+                    <button onClick={() => updateSection('video', 'aspectRatio', 'Default')} className="text-[8px] font-black text-white/20 hover:text-rose-500">RESET</button>
+                </div>
                 <div className="flex flex-wrap gap-2">
                   {['Default', '16:9', '16:10', '4:3', '2:1', '1:1'].map((ratio) => (
                     <button 
@@ -267,7 +321,10 @@ const SettingsModal = React.memo<SettingsModalProps>(({
               </div>
 
               <div className="space-y-6">
-                <label className="text-[10px] font-black uppercase tracking-widest text-white/40">Color Equalizer</label>
+                <div className="flex justify-between items-center">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-white/40">Color Equalizer</label>
+                    <button onClick={() => resetSection('video')} className="text-[8px] font-black text-rose-500 hover:underline">RESET ALL COLOR</button>
+                </div>
                 <div className="space-y-5">
                   {[
                     { label: 'Brightness', key: 'brightness', min: 0, max: 200 },
@@ -290,12 +347,7 @@ const SettingsModal = React.memo<SettingsModalProps>(({
                          <div className="absolute inset-0 bg-white/5 rounded-full" />
                          <div className="absolute h-full bg-rose-500 rounded-full" style={{ width: `${((((settings.video as any)[filter.key] - filter.min) / (filter.max - filter.min)) * 100)}%` }} />
                       </div>
-                      <button 
-                        onClick={() => resetSection('video', filter.key)}
-                        className="px-3 py-1 bg-white/5 hover:bg-rose-600 hover:text-white text-[8px] font-black uppercase rounded-lg transition-all"
-                      >
-                        Reset
-                      </button>
+                      <span className="w-8 text-right text-[9px] font-black text-white/20">{(settings.video as any)[filter.key]}</span>
                     </div>
                   ))}
                 </div>
@@ -342,13 +394,13 @@ const SettingsModal = React.memo<SettingsModalProps>(({
                </div>
 
                {[
-                 { label: 'Audio Channel', key: 'channel', options: ['Stereo', 'Mono', 'Surround 5.1'] },
+                 { label: 'Audio Channel', key: 'channel', options: ['stereo', 'mono', 'surround'] },
                  { label: 'Audio Device', key: 'device', options: ['Default', 'Headphones', 'Speaker'] },
                ].map((field) => (
                  <div key={field.key} className="space-y-3">
                     <label className="text-[10px] font-black uppercase tracking-widest text-white/40">{field.label}</label>
                     <CustomDropdown 
-                        options={field.options.map(o => ({ id: o, label: o }))}
+                        options={field.options.map(o => ({ id: o, label: o.charAt(0).toUpperCase() + o.slice(1) }))}
                         value={(settings.audio as any)[field.key]}
                         onChange={(val) => updateSection('audio', field.key, val)}
                     />
@@ -357,20 +409,29 @@ const SettingsModal = React.memo<SettingsModalProps>(({
 
                <div className="space-y-4">
                   <div className="flex justify-between items-center">
-                    <label className="text-[10px] font-black uppercase tracking-widest text-white/40">Audio Delay</label>
-                    <span className="text-[10px] font-black text-rose-500">{settings.audio.delay.toFixed(1)}s</span>
+                    <label className="text-[10px] font-black uppercase tracking-widest text-white/40">Audio Delay Sync</label>
+                    <div className="flex items-center gap-3">
+                        <button onClick={() => updateSection('audio', 'delay', 0)} className="text-[8px] font-black text-white/20 hover:text-rose-500">SYNC 0.0s</button>
+                        <span className="text-[10px] font-black text-rose-500">{settings.audio.delay.toFixed(1)}s</span>
+                    </div>
                   </div>
                   <div className="flex items-center gap-4">
                     <button 
-                      onClick={() => updateSection('audio', 'delay', Math.max(-5, settings.audio.delay - 0.1))}
-                      className="w-10 h-10 glass rounded-xl flex items-center justify-center hover:bg-rose-600 transition-all text-xl font-light"
+                      onClick={() => updateSection('audio', 'delay', parseFloat((settings.audio.delay - 0.1).toFixed(1)))}
+                      className="w-12 h-12 glass rounded-2xl flex items-center justify-center hover:bg-rose-600 transition-all text-xl font-light"
                     >–</button>
                     <div className="flex-1 h-1.5 glass rounded-full relative overflow-hidden">
-                       <div className="absolute inset-y-0 left-1/2 h-full bg-rose-600 transition-all" style={{ width: `${(settings.audio.delay / 5) * 50}%` }} />
+                       <div className="absolute h-full bg-rose-600 transition-all" 
+                            style={{ 
+                                left: settings.audio.delay < 0 ? `${50 + (settings.audio.delay/5)*50}%` : '50%',
+                                width: `${Math.abs(settings.audio.delay/5)*50}%` 
+                            }} 
+                       />
+                       <div className="absolute left-1/2 top-0 w-[1px] h-full bg-white/20" />
                     </div>
                     <button 
-                      onClick={() => updateSection('audio', 'delay', Math.min(5, settings.audio.delay + 0.1))}
-                      className="w-10 h-10 glass rounded-xl flex items-center justify-center hover:bg-rose-600 transition-all text-xl font-light"
+                      onClick={() => updateSection('audio', 'delay', parseFloat((settings.audio.delay + 0.1).toFixed(1)))}
+                      className="w-12 h-12 glass rounded-2xl flex items-center justify-center hover:bg-rose-600 transition-all text-xl font-light"
                     >+</button>
                   </div>
                </div>
@@ -382,41 +443,79 @@ const SettingsModal = React.memo<SettingsModalProps>(({
               <div className="space-y-3">
                  <label className="text-[10px] font-black uppercase tracking-widest text-white/40">Subtitle Select</label>
                  <CustomDropdown 
-                    options={[
-                        {id: 'disable', label: 'Disable'},
-                        {id: 'en', label: 'English (Auto)'}
-                    ]}
-                    value="en"
-                    onChange={() => {}}
+                    options={subtitleTracks.map(t => ({ id: t.id, label: t.label }))}
+                    value={selectedSubtitleId}
+                    onChange={onSubtitleChange}
                  />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
-                 <button className="py-4 bg-white/5 hover:bg-rose-600/20 border border-white/5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all">Load Subtitle</button>
-                 <button className="py-4 bg-white/5 hover:bg-rose-600/20 border border-white/5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all">Search Subtitle</button>
+                 <button 
+                    onClick={() => subtitleInputRef.current?.click()}
+                    className="py-4 bg-white/5 hover:bg-rose-600 border border-white/5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all"
+                 >
+                    Load Subtitle
+                 </button>
+                 <button 
+                    onClick={handleSearchSubtitle}
+                    className="py-4 bg-white/5 hover:bg-rose-600 border border-white/5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all"
+                 >
+                    Search Online
+                 </button>
+                 <input 
+                    type="file" 
+                    ref={subtitleInputRef} 
+                    onChange={(e) => e.target.files?.[0] && onLoadSubtitle(e.target.files[0])} 
+                    accept=".vtt,.srt" 
+                    className="hidden" 
+                 />
               </div>
 
               <div className="space-y-4">
                  <div className="flex justify-between items-center">
-                    <label className="text-[10px] font-black uppercase tracking-widest text-white/40">Subtitle Delay</label>
-                    <span className="text-[10px] font-black text-rose-500">{settings.subtitle.delay.toFixed(1)}s</span>
+                    <label className="text-[10px] font-black uppercase tracking-widest text-white/40">Subtitle Sync Delay</label>
+                    <div className="flex items-center gap-3">
+                        <button onClick={() => updateSection('subtitle', 'delay', 0)} className="text-[8px] font-black text-white/20 hover:text-rose-500">SYNC 0.0s</button>
+                        <span className="text-[10px] font-black text-rose-500">{settings.subtitle.delay.toFixed(1)}s</span>
+                    </div>
                  </div>
                  <div className="flex items-center gap-4">
-                    <button onClick={() => updateSection('subtitle', 'delay', settings.subtitle.delay - 0.5)} className="w-10 h-10 glass rounded-xl flex items-center justify-center text-xl font-light hover:bg-rose-600">-</button>
-                    <div className="flex-1 h-1 bg-white/10 rounded-full" />
-                    <button onClick={() => updateSection('subtitle', 'delay', settings.subtitle.delay + 0.5)} className="w-10 h-10 glass rounded-xl flex items-center justify-center text-xl font-light hover:bg-rose-600">+</button>
+                    <button onClick={() => updateSection('subtitle', 'delay', parseFloat((settings.subtitle.delay - 0.1).toFixed(1)))} className="w-12 h-12 glass rounded-2xl flex items-center justify-center text-xl font-light hover:bg-rose-600">-</button>
+                    <div className="flex-1 h-1 bg-white/10 rounded-full relative overflow-hidden">
+                        <div className="absolute h-full bg-rose-600 transition-all" 
+                            style={{ 
+                                left: settings.subtitle.delay < 0 ? `${50 + (settings.subtitle.delay/10)*50}%` : '50%',
+                                width: `${Math.abs(settings.subtitle.delay/10)*50}%` 
+                            }} 
+                        />
+                    </div>
+                    <button onClick={() => updateSection('subtitle', 'delay', parseFloat((settings.subtitle.delay + 0.1).toFixed(1)))} className="w-12 h-12 glass rounded-2xl flex items-center justify-center text-xl font-light hover:bg-rose-600">+</button>
                  </div>
               </div>
 
-              <div className="space-y-3">
-                 <label className="text-[10px] font-black uppercase tracking-widest text-white/40">Subtitle Encoding</label>
-                 <div className="flex">
-                   <button 
-                     onClick={() => updateSection('subtitle', 'encoding', 'Auto')}
-                     className={`flex-1 py-4 rounded-2xl text-[10px] font-black uppercase transition-all ${
-                       settings.subtitle.encoding === 'Auto' ? 'bg-rose-600 shadow-xl' : 'bg-white/5 text-white/40'
-                     }`}
-                   >Auto</button>
+              <div className="space-y-4">
+                 <label className="text-[10px] font-black uppercase tracking-widest text-white/40">Subtitle Visuals</label>
+                 <div className="p-5 bg-white/5 rounded-3xl border border-white/5 space-y-4">
+                    <div className="flex items-center gap-4">
+                        <span className="w-20 text-[9px] font-bold text-white/40">Font Size:</span>
+                        <input 
+                            type="range" min="10" max="48" 
+                            value={settings.subtitle.fontSize} 
+                            onChange={(e) => updateSection('subtitle', 'fontSize', parseInt(e.target.value))}
+                            className="flex-1"
+                        />
+                        <span className="w-8 text-right text-[10px] font-black text-rose-500">{settings.subtitle.fontSize}px</span>
+                    </div>
+                    <div className="flex items-center gap-4">
+                        <span className="w-20 text-[9px] font-bold text-white/40">Opacity:</span>
+                        <input 
+                            type="range" min="0" max="100" 
+                            value={settings.subtitle.backgroundOpacity} 
+                            onChange={(e) => updateSection('subtitle', 'backgroundOpacity', parseInt(e.target.value))}
+                            className="flex-1"
+                        />
+                        <span className="w-8 text-right text-[10px] font-black text-rose-500">{settings.subtitle.backgroundOpacity}%</span>
+                    </div>
                  </div>
               </div>
             </div>
